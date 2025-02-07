@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
 Prime Search with Specified Digit Count
-Version: 1.0
+Version: 1.1
 Credits: Galeno Garbe
 
-This program searches for a prime number with a specified number of digits.
-It uses gmpy2 for fast arbitrary-precision arithmetic and multiprocessing for parallel processing.
-Performance data is logged to a JSON file and compared against historical best results.
+This program searches for a prime number with a specified digit count.
+It uses gmpy2 for fast arbitrary-precision arithmetic and multiprocessing to 
+distribute the work across CPU cores. Performance data is logged to a JSON file 
+and compared against historical best results.
+
+An animated spinner (using the Rich library) is displayed below the progress 
+information during processing.
 """
 
 import sys
@@ -27,8 +31,16 @@ import gmpy2
 from gmpy2 import mpz
 from colorama import init, Fore, Style
 
+# Import Rich for animated output
+from rich.live import Live
+from rich.text import Text
+from rich.console import Console
+
 # Initialize colorama (colors will be used only for percentage variations)
 init(autoreset=True)
+
+# Create a Rich Console object
+console = Console()
 
 # Constant: natural logarithm of 10
 LOG10 = math.log(10)
@@ -225,7 +237,7 @@ def main(digits_param=None):
     # Print program header
     print("Prime search with specified digit count.\n")
     
-    # Obtain digit count either from parameter or prompt the user
+    # Get digit count from parameter or prompt user
     if digits_param is None:
         while True:
             try:
@@ -239,7 +251,7 @@ def main(digits_param=None):
     else:
         digits = digits_param
 
-    # Show the digit count in the progress display and summary
+    # Display the requested digit count
     print(f"Digit Count: {digits}\n")
     
     try:
@@ -249,9 +261,9 @@ def main(digits_param=None):
         print(f"Error computing bounds for digits: {e}")
         return
 
-    # Read historical best metrics for this digit count, if available
+    # Read historical best metrics for this digit count (if available)
     historical_best = get_best_historical_metrics(digits)
-    static_eta = None  # ETA calculated once
+    static_eta = None  # ETA will be calculated once
 
     num_processes = psutil.cpu_count(logical=True)
     manager = multiprocessing.Manager()
@@ -270,32 +282,40 @@ def main(digits_param=None):
         except Exception as e:
             print(f"Error starting a worker process: {e}")
     
+    # Set up a spinner animation using Rich
+    spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    spinner_index = 0
+
     start_time = time.time()
     try:
-        # Update progress every 0.5 seconds; include digit count in the display
-        while not found_event.is_set():
-            time.sleep(0.5)
-            elapsed = time.time() - start_time
-            with global_attempts.get_lock():
-                attempts_val = global_attempts.value
-            speed = attempts_val / elapsed if elapsed > 0 else 0
-            cpu_percent = psutil.cpu_percent(interval=0.0)
-            if static_eta is None and speed > 0:
-                try:
-                    if digits > 1:
-                        p_val = 30 / (8 * (digits - 1) * LOG10)
-                    else:
-                        p_val = 0.5
-                    expected_total_attempts = 1 / p_val
-                    remaining_attempts = max(expected_total_attempts - attempts_val, 0)
-                    static_eta = remaining_attempts / speed
-                except Exception as e:
-                    static_eta = 0
-            eta = static_eta if static_eta is not None else 0
-            progress_line = (f"Digits: {digits} | Attempts: {attempts_val} | Time: {format_time(elapsed)} | "
-                             f"Numbers/Sec: {speed:.2f} | CPU Usage: {cpu_percent:.2f}% | ETA: {format_time(eta)}")
-            sys.stdout.write("\r" + progress_line)
-            sys.stdout.flush()
+        # Use Rich's Live to update the output with animation below the progress line
+        with Live("", refresh_per_second=4, console=console) as live:
+            while not found_event.is_set():
+                time.sleep(0.5)
+                elapsed = time.time() - start_time
+                with global_attempts.get_lock():
+                    attempts_val = global_attempts.value
+                speed = attempts_val / elapsed if elapsed > 0 else 0
+                cpu_percent = psutil.cpu_percent(interval=0.0)
+                if static_eta is None and speed > 0:
+                    try:
+                        if digits > 1:
+                            p_val = 30 / (8 * (digits - 1) * LOG10)
+                        else:
+                            p_val = 0.5
+                        expected_total_attempts = 1 / p_val
+                        remaining_attempts = max(expected_total_attempts - attempts_val, 0)
+                        static_eta = remaining_attempts / speed
+                    except Exception as e:
+                        static_eta = 0
+                eta = static_eta if static_eta is not None else 0
+                progress_line = (f"Digit Count: {digits} | Attempts: {attempts_val} | Time: {format_time(elapsed)} | "
+                                 f"Numbers/Sec: {speed:.2f} | CPU Usage: {cpu_percent:.2f}% | ETA: {format_time(eta)}")
+                # Update spinner
+                spinner = spinner_chars[spinner_index]
+                spinner_index = (spinner_index + 1) % len(spinner_chars)
+                combined_text = Text(progress_line + "\n" + spinner)
+                live.update(combined_text)
     except KeyboardInterrupt:
         found_event.set()
         print("\nInterrupted by user.")
@@ -316,11 +336,10 @@ def main(digits_param=None):
         print("No prime found.")
         return
 
-    # Clear the progress line
-    sys.stdout.write("\r" + " " * 140 + "\r")
-    sys.stdout.flush()
-    
-    # Obtain system info for the current test
+    # Clear the live display
+    console.clear()
+
+    # Get system info for the current test
     system_info = get_system_info()
     entry = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
@@ -333,8 +352,9 @@ def main(digits_param=None):
         "prime_scientific": format_scientific(prime, precision=3),
         "system_info": system_info
     }
-    log_file = "prime_log.json"
+    
     try:
+        log_file = "prime_log.json"
         logs = update_log(entry, log_file)
     except Exception as e:
         print(f"Error updating log: {e}")
@@ -350,13 +370,13 @@ def main(digits_param=None):
             "system_info": system_info
         }
     
-    # Calculate percentage variations
+    # Calculate percentage variations for each metric
     var_attempts = compute_variation(final_attempts, historical_best["attempts"], lower_is_better=True)
     var_time = compute_variation(total_elapsed, historical_best["elapsed"], lower_is_better=True)
     var_speed = compute_variation(final_speed, historical_best["speed"], lower_is_better=False)
     var_cpu = compute_variation(cpu_percent, historical_best["cpu"], lower_is_better=True)
 
-    # Display the results table with labels in English
+    # Display the results in a table with Current, Best, and Variation (%) columns
     print("\nResults:")
     header = "{:<15} {:<20} {:<20} {:<15}".format("Label", "Current", "Best", "Variation (%)")
     print(header)
@@ -367,7 +387,7 @@ def main(digits_param=None):
     print("{:<15} {:<20} {:<20} {:<15}".format("CPU Usage", f"{cpu_percent:.2f}%", f"{historical_best['cpu']:.2f}%", format_variation(var_cpu)))
     print("{:<15} {:<20} {:<20}".format("Prime", format_scientific(prime, precision=3), historical_best["prime_scientific"]))
     
-    # Display best system info in one summarized line
+    # Display the system info of the best test in a summarized single line
     best_sys = historical_best.get("system_info", system_info)
     summary_line = "Computer: {} | Processor: {} | Threads: {} | Total Memory (GB): {}".format(
         best_sys.get("Computer", "N/A"),
@@ -380,6 +400,7 @@ def main(digits_param=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prime search with specified digit count")
+    # Optional positional argument: if provided, it will be used; otherwise, the user is prompted.
     parser.add_argument("digits", type=int, nargs="?", help="Digit count for the prime")
     args = parser.parse_args()
     try:
