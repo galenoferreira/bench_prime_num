@@ -251,9 +251,7 @@ def main(digits_param=None):
     else:
         digits = digits_param
 
-    # Display the requested digit count
-    print(f"Digit Count: {digits}\n")
-    
+
     try:
         lower = 10**(digits - 1)
         upper = 10**digits
@@ -281,10 +279,6 @@ def main(digits_param=None):
             workers.append(p)
         except Exception as e:
             print(f"Error starting a worker process: {e}")
-    
-    # Set up a spinner animation using Rich
-    spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    spinner_index = 0
 
     start_time = time.time()
     try:
@@ -311,11 +305,6 @@ def main(digits_param=None):
                 eta = static_eta if static_eta is not None else 0
                 progress_line = (f"Digit Count: {digits} | Attempts: {attempts_val} | Time: {format_time(elapsed)} | "
                                  f"Numbers/Sec: {speed:.2f} | CPU Usage: {cpu_percent:.2f}% | ETA: {format_time(eta)}")
-                # Update spinner
-                spinner = spinner_chars[spinner_index]
-                spinner_index = (spinner_index + 1) % len(spinner_chars)
-                combined_text = Text(progress_line + "\n" + spinner)
-                live.update(combined_text)
     except KeyboardInterrupt:
         found_event.set()
         print("\nInterrupted by user.")
