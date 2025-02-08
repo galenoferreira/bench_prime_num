@@ -16,6 +16,18 @@ This project is a Python program that searches for a prime number with a specifi
 
 ## Prerequisites
 
+# via CONDA
+
+conda env create -f environment.yml
+
+#conda create --name bench_prime_env python=3.10 -y
+#conda activate bench_prime_env
+#pip install gmpy2 colorama rich psutil
+
+conda env export > environment.yml
+
+
+
 ### Python
 
 - **Python 3.7 or higher** is required. You can download the latest version from the [official Python website](https://www.python.org/downloads/).
