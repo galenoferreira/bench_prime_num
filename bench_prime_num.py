@@ -235,7 +235,7 @@ def worker(lower, upper, global_attempts, found_event, result_dict):
 
 def main(digits_param=None):
     # Print program header
-    print("Prime search with specified digit count.\n")
+    #print("Prime search with specified digit count.\n")
     
     # Get digit count from parameter or prompt user
     if digits_param is None:
@@ -251,7 +251,13 @@ def main(digits_param=None):
     else:
         digits = digits_param
 
+<<<<<<< HEAD
 
+=======
+    # Display the requested digit count
+    print(f"\n")
+    
+>>>>>>> 1793e76 (Back to main)
     try:
         lower = 10**(digits - 1)
         upper = 10**digits
@@ -324,9 +330,6 @@ def main(digits_param=None):
     if prime is None:
         print("No prime found.")
         return
-
-    # Clear the live display
-    console.clear()
 
     # Get system info for the current test
     system_info = get_system_info()
