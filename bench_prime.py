@@ -413,9 +413,9 @@ if __name__ == "__main__":
         if args.repeat is not None:
             # Repeat tests for args.repeat times (default 10)
             for i in range(args.repeat):
-                print(f"\n--- Test iteration {i+1} of {args.repeat} ---\n")
+                print(f"\n--- Test iteration {i+1} of {args.repeat} ---")
                 main(digits_param=args.digits, repeat_mode=True)
-                print("\nRepeating test...\n")
+                print("\nRepeating test...")
                 time.sleep(1)
         else:
             main(digits_param=args.digits, repeat_mode=False)
