@@ -30,6 +30,7 @@ import platform
 import gmpy2
 from gmpy2 import mpz
 from colorama import init, Fore, Style
+import subprocess  # para garantir que o comando beep seja executado por completo
 
 # Import Rich for animated output
 from rich.live import Live
@@ -44,6 +45,26 @@ console = Console()
 
 # Constant: natural logarithm of 10
 LOG10 = math.log(10)
+
+# ---------------- Função para tocar som ----------------
+def play_beep():
+    """
+    Toca um beep usando o comando adequado conforme o sistema operacional.
+    No macOS utiliza AppleScript (usando subprocess.run para aguardar a execução);
+    no Linux tenta usar o comando "beep" se estiver disponível, caso contrário, imprime o caractere BEL.
+    """
+    if sys.platform == "darwin":
+        # Usa subprocess.run para aguardar a execução completa do som
+        subprocess.run(['osascript', '-e', 'beep'], check=True)
+    elif sys.platform.startswith("linux"):
+        # Tenta usar o comando 'beep' se estiver instalado; caso contrário, imprime o caractere BEL.
+        if os.system("command -v beep > /dev/null 2>&1") == 0:
+            os.system("beep")
+        else:
+            print('\a')
+    else:
+        print('\a')
+# --------------------------------------------------------
 
 # ---------------- Utility Functions ----------------
 
@@ -232,12 +253,13 @@ def worker(lower, upper, global_attempts, found_event, result_dict):
         print(f"Error in worker process: {e}")
 
 # ---------------- Main Function ----------------
-
 def main(digits_param=None):
-    # Print program header
-    #print("Prime search with specified digit count.\n")
-    
-    # Get digit count from parameter or prompt user
+    """
+    Executa o teste para o dígito informado e exibe os resultados.
+    Retorna True se o teste atual produziu um novo recorde no Performance Ratio,
+    ou False caso contrário.
+    """
+    # Obter contagem de dígitos do parâmetro ou via input
     if digits_param is None:
         while True:
             try:
@@ -251,15 +273,14 @@ def main(digits_param=None):
     else:
         digits = digits_param
 
-    # Display the requested digit count
-    print(f"\n")
-    
+    print(f"\n")  # Linha em branco
+
     try:
         lower = 10**(digits - 1)
         upper = 10**digits
     except Exception as e:
         print(f"Error computing bounds for digits: {e}")
-        return
+        return False
 
     # ---------------- NOVA FUNCIONALIDADE: Cálculo da média histórica de "speed" ----------------
     historical_avg_speed = None
@@ -275,9 +296,9 @@ def main(digits_param=None):
             historical_avg_speed = None
     # ----------------------------------------------------------------------------------------------
 
-    # Read historical best metrics for this digit count (if available)
+    # Ler métricas históricas para este dígito (se disponível)
     historical_best = get_best_historical_metrics(digits)
-    static_eta = None  # ETA fallback calculation using o speed atual
+    static_eta = None  # cálculo de ETA usando a velocidade atual como fallback
 
     num_processes = psutil.cpu_count(logical=True)
     manager = multiprocessing.Manager()
@@ -285,7 +306,7 @@ def main(digits_param=None):
     found_event = multiprocessing.Event()
     global_attempts = multiprocessing.Value('l', 0)
     
-    # Start worker processes
+    # Iniciar os processos worker
     workers = []
     for _ in range(num_processes):
         try:
@@ -298,7 +319,7 @@ def main(digits_param=None):
 
     start_time = time.time()
     try:
-        # Use Rich's Live to update the output with animation below the progress line
+        # Utiliza o Live do Rich para atualizar a interface
         with Live("", refresh_per_second=4, console=console) as live:
             while not found_event.is_set():
                 time.sleep(0.5)
@@ -307,7 +328,7 @@ def main(digits_param=None):
                     attempts_val = global_attempts.value
                 speed = attempts_val / elapsed if elapsed > 0 else 0
                 cpu_percent = psutil.cpu_percent(interval=0.0)
-                # ---------------- NOVA FUNCIONALIDADE: Cálculo do ETA usando a média histórica ----------------
+                # ---------------- Cálculo do ETA usando a média histórica ----------------
                 if historical_avg_speed is not None and historical_avg_speed > 0:
                     if digits > 1:
                         p_val = 30 / (8 * (digits - 1) * LOG10)
@@ -329,7 +350,7 @@ def main(digits_param=None):
                         except Exception as e:
                             static_eta = 0
                     eta = static_eta if static_eta is not None else 0
-                # ------------------------------------------------------------------------------------------
+                # --------------------------------------------------------------------------------
                 progress_line = (f"Digit Count: {digits} | Attempts: {attempts_val} | Time: {format_time(elapsed)} | "
                                  f"Numbers/Sec: {speed:.2f} | CPU Usage: {cpu_percent:.2f}% | ETA: {format_time(eta)}")
                 live.update(Text(progress_line, style="bold"))
@@ -340,7 +361,7 @@ def main(digits_param=None):
         print(f"\nError during progress update: {e}")
         found_event.set()
     
-    # Wait for all worker processes to finish
+    # Aguarda a finalização de todos os processos worker
     for p in workers:
         p.join()
     
@@ -351,9 +372,9 @@ def main(digits_param=None):
     prime = result_dict.get('prime', None)
     if prime is None:
         print("No prime found.")
-        return
+        return False
 
-    # Get system info for the current test
+    # Obter informações do sistema para o teste atual
     system_info = get_system_info()
     entry = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
@@ -384,13 +405,13 @@ def main(digits_param=None):
             "system_info": system_info
         }
     
-    # Calculate percentage variations for each metric
+    # Calcular as variações percentuais para cada métrica
     var_attempts = compute_variation(final_attempts, historical_best["attempts"], lower_is_better=True)
     var_time = compute_variation(total_elapsed, historical_best["elapsed"], lower_is_better=True)
     var_speed = compute_variation(final_speed, historical_best["speed"], lower_is_better=False)
     var_cpu = compute_variation(cpu_percent, historical_best["cpu"], lower_is_better=True)
 
-    # Display the results in a table with Current, Best, and Variation (%) columns
+    # Exibir os resultados em uma tabela
     print("\nResults:")
     header = "{:<15} {:<20} {:<20} {:<15}".format("Label", "Current", "Best", "Variation (%)")
     print(header)
@@ -402,11 +423,11 @@ def main(digits_param=None):
     print("{:<15} {:<20} {:<20}".format("Prime", format_scientific(prime, precision=3), historical_best["prime_scientific"]))
     
     # ------------- NOVA FUNCIONALIDADE: Exibição do Performance Ratio -------------
-    # Calcula o Performance Ratio (tempo/attempt) em milissegundos para o cálculo atual
+    # Calcula o Performance Ratio (tempo/attempt) em milissegundos para o teste atual
     current_ratio = total_elapsed / final_attempts if final_attempts else 0
     current_ratio_ms = current_ratio * 1000
 
-    # Para exibir o melhor índice anterior, filtramos o log excluindo o registro atual
+    # Filtra o log para obter o melhor índice anterior (excluindo o registro atual)
     current_ts = entry["timestamp"]
     previous_best_ratio = None
     if os.path.exists(log_file):
@@ -428,15 +449,21 @@ def main(digits_param=None):
     print("")  # Linha em branco
     # Exibe o Performance Ratio atual (em negrito)
     print("\033[1mPerformance Ratio: {:.3f} ms/attempt\033[0m".format(current_ratio_ms))
-    # Se existir um registro anterior, mostra também o melhor índice anterior.
+    new_record = False
+    # Se existir um registro anterior, mostra também o melhor índice anterior e toca um som se for novo recorde.
     if previous_best_ratio_ms is not None:
         if current_ratio_ms < previous_best_ratio_ms:
             print("\033[1mNew record! Previous best Performance Ratio: {:.3f} ms/attempt\033[0m".format(previous_best_ratio_ms))
+            play_beep()
+            new_record = True
         else:
             print("Best Performance Ratio: {:.3f} ms/attempt".format(previous_best_ratio_ms))
+    else:
+        # Se não houver registro anterior, consideramos o resultado como recorde.
+        new_record = True
     # ----------------------------------------------------------------------------
 
-    # Display the system info of the best test in a summarized single line
+    # Exibir as informações do sistema do melhor teste
     best_sys = historical_best.get("system_info", system_info)
     summary_line = "Computer: {} | Processor: {} | Threads: {} | Total Memory (GB): {}".format(
         best_sys.get("Computer", "N/A"),
@@ -447,17 +474,27 @@ def main(digits_param=None):
     print("\nSystem Info (Best Test):")
     print(f"Digit Count: {digits} | {summary_line}")
 
+    return new_record
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prime search with specified digit count")
-    # Optional positional argument: if provided, it will be used; otherwise, the user is prompted.
+    # Parâmetro posicional para os dígitos
     parser.add_argument("digits", type=int, nargs="?", help="Digit count for the prime")
+    # Novo parâmetro opcional "-r" para repetir os testes até obter um novo recorde
+    parser.add_argument("-r", "--repeat", action="store_true", help="Repeat tests until a better Performance Ratio is obtained")
     args = parser.parse_args()
     try:
         multiprocessing.set_start_method("fork")
     except RuntimeError:
         pass
-    try:
+
+    if args.repeat:
+        new_record = False
+        while not new_record:
+            new_record = main(digits_param=args.digits)
+            if not new_record:
+                print("\nNo new record achieved. Repeating test...\n")
+                time.sleep(1)  # pequena pausa antes de repetir
+    else:
         main(digits_param=args.digits)
-    except Exception as e:
-        print(f"Unexpected error: {e}")
 
