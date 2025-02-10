@@ -6,7 +6,7 @@ Credits: Galeno Garbe
 
 This program searches for a prime number with a specified digit count.
 It uses gmpy2 for fast arbitrary-precision arithmetic and multiprocessing to 
-distribute the work across CPU cores. Performance data is logged to a JSON file 
+distribute the work across physical CPU cores. Performance data is logged to a JSON file 
 and compared against historical best results.
 
 An animated spinner (using the Rich library) is displayed below the progress 
@@ -14,7 +14,6 @@ information during processing.
 """
 
 import sys
-# Increase the maximum number of digits for integer-to-string conversion (Python 3.11+)
 if hasattr(sys, "set_int_max_str_digits"):
     sys.set_int_max_str_digits(10000)
 
@@ -33,29 +32,29 @@ from colorama import init, Fore, Style
 import subprocess   # to ensure the beep command is fully executed
 import signal       # (not used for interactive prompt in this version)
 
-# Import Rich for animated output
 from rich.live import Live
 from rich.text import Text
 from rich.console import Console
 
-# Initialize colorama
+# Initialize colorama and create a Rich console
 init(autoreset=True)
-# Create a Rich Console object
 console = Console()
 
 # Constant: natural logarithm of 10
 LOG10 = math.log(10)
 
-# ---------------- Function to play beep ----------------
+# ---------------- Função para tocar som ----------------
 def play_beep():
     """
-    Plays a beep using the appropriate command based on the operating system.
-    On macOS it uses AppleScript (via subprocess.run to wait for completion);
-    on Linux it tries to use the 'beep' command if available, otherwise prints the BEL character.
+    Toca um beep usando o comando adequado conforme o sistema operacional.
+    No macOS utiliza AppleScript; no Linux tenta usar o comando "beep" se estiver disponível,
+    caso contrário, imprime o caractere BEL.
     """
     if sys.platform == "darwin":
-        subprocess.run(['osascript', '-e', 'beep'], check=True)
+        os.system('osascript -e "beep"')
+        
     elif sys.platform.startswith("linux"):
+        # Tenta usar o comando 'beep' se estiver instalado; caso contrário, imprime o caractere BEL.
         if os.system("command -v beep > /dev/null 2>&1") == 0:
             os.system("beep")
         else:
@@ -85,8 +84,8 @@ def format_scientific(n, precision=3):
 
 def format_time(seconds):
     """
-    Formats a time value (in seconds) as MM:SS.D (minutes, seconds and deciseconds).
-    This function is used for the live progress display.
+    Formats a time value (in seconds) as MM:SS.D (minutes, seconds and deciseconds)
+    for the live progress display.
     """
     try:
         minutes = int(seconds // 60)
@@ -98,7 +97,7 @@ def format_time(seconds):
 
 def format_final_time(seconds):
     """
-    For the final summary: if the elapsed time is less than 1 second, display in milliseconds;
+    For the final summary: if elapsed time is less than 1 second, display in milliseconds;
     otherwise, display in the format MM:SS:CC (minutes, seconds, centiseconds).
     """
     if seconds < 1:
@@ -124,8 +123,6 @@ def is_probable_prime(n, k=10):
 def compute_variation(actual, best, lower_is_better=True):
     """
     Calculates the percentage variation comparing the current value with the best historical value.
-    For metrics where lower is better: ((best - current) / best) * 100.
-    For metrics where higher is better: ((actual - best) / best) * 100.
     Returns 0 if best is 0.
     """
     try:
@@ -140,8 +137,7 @@ def compute_variation(actual, best, lower_is_better=True):
 
 def format_variation(value):
     """
-    Formats the variation value with two decimal places.
-    Colors the value green if positive (improvement) and red if negative (worse).
+    Formats the variation value with two decimal places and colors it.
     """
     try:
         formatted = f"{value:.2f}"
@@ -158,15 +154,14 @@ def format_variation(value):
 # ---------------- Log Handling Functions ----------------
 def update_log(entry, log_file="prime_log.json"):
     """
-    Updates the log (JSON file) with the given entry.
-    If the file exists, it loads the history, appends the new entry, and writes it back.
+    Updates the JSON log file with the new entry.
     """
     logs = []
     try:
         if os.path.exists(log_file):
             with open(log_file, "r", encoding="utf-8") as f:
                 logs = json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
+    except (json.JSONDecodeError, IOError):
         logs = []
     except Exception as e:
         print(f"Error reading log file: {e}")
@@ -215,18 +210,20 @@ def get_best_historical_metrics(digits, log_file="prime_log.json"):
 
 def get_previous_best_ratio(digits, log_file="prime_log.json"):
     """
-    Scans the log file for entries with the given digit count and computes the minimal
-    Performance Ratio (elapsed/attempts in ms). Returns None if no entries are found.
+    Computes the previous best ratio based on the historical best speed.
+    The ratio is defined as (1 / speed) * 1000 (ms/attempt).
+    Returns None if no valid speed is found.
     """
     if not os.path.exists(log_file):
         return None
     try:
         with open(log_file, "r", encoding="utf-8") as f:
             logs = json.load(f)
-        ratios = [e["elapsed"]/e["attempts"] for e in logs 
-                  if e.get("digits") == digits and e.get("attempts", 0) > 0]
-        if ratios:
-            return min(ratios)*1000
+        speeds = [entry["speed"] for entry in logs 
+                  if entry.get("digits") == digits and entry.get("speed", 0) > 0]
+        if speeds:
+            best_speed = max(speeds)  # Assuming "best" speed means the highest speed.
+            return (1 / best_speed) * 1000
         else:
             return None
     except Exception as e:
@@ -234,23 +231,26 @@ def get_previous_best_ratio(digits, log_file="prime_log.json"):
 # ---------------------------------------------------------
 
 # ---------------- Multiprocessing Worker ----------------
-def worker(lower, upper, global_attempts, found_event, result_dict):
+def worker(lower, upper, global_attempts, found_event, result_dict, batch_size):
     """
-    Function executed by each process:
-      - Generates random candidates in the interval [lower, upper) using a simple wheel filter.
-      - Updates the global counter for each candidate generated.
-      - Tests for primality (using gmpy2) and, if a prime is found, stores the result.
+    Worker process: generates random candidates and updates the global counter in batches.
+    Uses a local counter to reduce lock contention.
     """
     wheel_offsets = (1, 7, 11, 13, 17, 19, 23, 29)
+    local_count = 0
     try:
         while not found_event.is_set():
             candidate = random.randrange(lower, upper)
-            with global_attempts.get_lock():
-                global_attempts.value += 1
+            local_count += 1
+            if local_count >= batch_size:
+                with global_attempts.get_lock():
+                    global_attempts.value += local_count
+                local_count = 0
             if candidate % 30 not in wheel_offsets:
                 continue
             if is_probable_prime(candidate):
                 with global_attempts.get_lock():
+                    global_attempts.value += local_count
                     result_dict['attempts'] = global_attempts.value
                 result_dict['prime'] = candidate
                 found_event.set()
@@ -263,14 +263,16 @@ def worker(lower, upper, global_attempts, found_event, result_dict):
 def main(digits_param=None, repeat_mode=False, repeat_count=10):
     """
     Executes the test for the given digit count and displays the results.
-    Also shows:
+    Shows:
       - Performance Ratio: (current test ratio in ms/attempt)
-      - Previous best ratio: (record value from the log, if available)
-    If repeat_mode is True (via -r), the test is repeated for the specified number of times.
-    For the final summary, if the elapsed time is less than 1 second, time is shown in ms;
-    otherwise, in the format MM:SS:CC.
+      - Previous best ratio: (record value from the log based on best speed)
+    If a new record is achieved (current ratio < previous best ratio), the script plays a beep,
+    shows "New record achieved!" and stops.
+    If not, and if repeat_mode is True, the test is repeated for the specified number of iterations.
+    For the final summary, if elapsed time < 1 sec, time is shown in milliseconds;
+    otherwise, in MM:SS:CC.
     """
-    # Get digit count either from parameter or via input
+    # Get digit count from parameter or input
     if digits_param is None:
         while True:
             try:
@@ -286,7 +288,7 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
 
     print("\n")  # Blank line
 
-    # Display the algorithm (in two lines)
+    # Display algorithm (two lines)
     print("Algorithm used: Random candidate generation with wheel filter optimization")
     print("and gmpy2 probabilistic prime test.\n")
 
@@ -297,7 +299,7 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
         print(f"Error computing bounds for digits: {e}")
         return
 
-    # Calculate historical average speed (not displayed)
+    # Historical average speed (not used in display)
     historical_avg_speed = None
     log_file = "prime_log.json"
     if os.path.exists(log_file):
@@ -310,21 +312,27 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
         except Exception as e:
             historical_avg_speed = None
 
-    # Get historical best metrics (if available)
+    # Historical best metrics (if available)
     historical_best = get_best_historical_metrics(digits)
 
-    num_processes = psutil.cpu_count(logical=True)
+    # Use physical cores to avoid hyperthreading
+    physical_cores = psutil.cpu_count(logical=False) or psutil.cpu_count(logical=True)
+    num_processes = physical_cores
+
+    # Define batch size = max(1, 10% of digit count)
+    batch_size = max(1, int(0.1 * digits))
+
     manager = multiprocessing.Manager()
     result_dict = manager.dict()
     found_event = multiprocessing.Event()
     global_attempts = multiprocessing.Value('l', 0)
     
-    # Start worker processes
+    # Start worker processes, passing the batch_size to each
     workers = []
     for _ in range(num_processes):
         try:
             p = multiprocessing.Process(target=worker,
-                                        args=(lower, upper, global_attempts, found_event, result_dict))
+                                        args=(lower, upper, global_attempts, found_event, result_dict, batch_size))
             p.start()
             workers.append(p)
         except Exception as e:
@@ -332,10 +340,10 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
 
     start_time = time.time()
     try:
-        # Update the live interface (without ETA)
+        # Live progress update (without ETA); double the sleep interval for updates (1.0 sec)
         with Live("", refresh_per_second=4, console=console) as live:
             while not found_event.is_set():
-                time.sleep(0.5)
+                time.sleep(1.0)
                 elapsed = time.time() - start_time
                 with global_attempts.get_lock():
                     attempts_val = global_attempts.value
@@ -352,8 +360,7 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
         print(f"\nError during progress update: {e}")
         found_event.set()
         return
-    
-    # Wait for all worker processes to finish
+
     for p in workers:
         p.join()
     
@@ -381,15 +388,15 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
         update_log(entry, log_file)
     except Exception as e:
         print(f"Error updating log: {e}")
-    
-    # Compute current performance ratio (ms/attempt)
+
+    # Compute current performance ratio in ms/attempt
     current_ratio_ms = (total_elapsed / final_attempts) * 1000
-    # Get previous best ratio from log
-    previous_best_ratio_ms = get_previous_best_ratio(digits, log_file)
-    if previous_best_ratio_ms is None:
+    # Compute previous best ratio using the best speed from historical metrics (1 / best speed * 1000)
+    if historical_best is not None and "speed" in historical_best and historical_best["speed"] > 0:
+        previous_best_ratio_ms = (1 / historical_best["speed"]) * 1000
+    else:
         previous_best_ratio_ms = current_ratio_ms
 
-    # Display final results, using format_final_time for Time display
     print("\nResults:")
     header = "{:<15} {:<20} {:<20} {:<15}".format("Label", "Current", "Best", "Variation (%)")
     print(header)
@@ -406,19 +413,23 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
     print("{:<15} {:<20} {:<20} {:<15}".format("CPU Usage", f"{cpu_percent:.2f}%",
           f"{historical_best['cpu']:.2f}%" if historical_best and "cpu" in historical_best else f"{cpu_percent:.2f}%",
           format_variation(compute_variation(cpu_percent, historical_best["cpu"]) if historical_best and "cpu" in historical_best else 0)))
-    # Display "Prime Found" in bold
     print("{:<15} {:<20}".format("Prime Found", f"\033[1m{format_scientific(prime, precision=3)}\033[0m"))
     
     print(f"\nPerformance Ratio: {current_ratio_ms:.3f} ms/attempt")
     print(f"Previous best ratio: {previous_best_ratio_ms:.3f} ms/attempt")
     
+    # If the new record is achieved (current ratio < previous best), play the beep and stop.
+    if current_ratio_ms < previous_best_ratio_ms:
+        play_beep()
+        print("\nNew record achieved!")
+        sys.exit(0)
     return
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prime search with specified digit count")
     parser.add_argument("digits", type=int, nargs="?", help="Digit count for the prime")
     parser.add_argument("-r", "--repeat", type=int, nargs="?", const=10,
-                        help="Repeat tests for the specified number of times (default 10)")
+                        help="Repeat tests for the specified number of iterations (default 10)")
     args = parser.parse_args()
     try:
         multiprocessing.set_start_method("fork")
@@ -431,7 +442,7 @@ if __name__ == "__main__":
                 print(f"\n--- Test iteration {i+1} of {args.repeat} ---\n")
                 main(digits_param=args.digits, repeat_mode=True)
                 print("\nRepeating test...\n")
-                time.sleep(1)
+                time.sleep(2)  # doubled sleep interval between iterations
         else:
             main(digits_param=args.digits, repeat_mode=False)
     except KeyboardInterrupt:
