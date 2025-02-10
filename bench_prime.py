@@ -93,7 +93,7 @@ def compute_variation(actual, best, lower_is_better=True):
     """
     Calculates the percentage variation comparing the current value with the best historical value.
     For metrics where lower is better: ((best - current) / best) * 100.
-    For metrics where higher is better: ((current - best) / best) * 100.
+    For metrics where higher is better: ((actual - best) / best) * 100.
     Returns 0 if best is 0.
     """
     try:
@@ -251,13 +251,9 @@ def main(digits_param=None):
     else:
         digits = digits_param
 
-<<<<<<< HEAD
-
-=======
     # Display the requested digit count
     print(f"\n")
     
->>>>>>> 1793e76 (Back to main)
     try:
         lower = 10**(digits - 1)
         upper = 10**digits
@@ -265,9 +261,23 @@ def main(digits_param=None):
         print(f"Error computing bounds for digits: {e}")
         return
 
+    # ---------------- NOVA FUNCIONALIDADE: Cálculo da média histórica de "speed" ----------------
+    historical_avg_speed = None
+    log_file = "prime_log.json"
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                logs = json.load(f)
+            relevant_entries = [entry for entry in logs if entry.get("digits") == digits and "speed" in entry]
+            if relevant_entries:
+                historical_avg_speed = sum(entry["speed"] for entry in relevant_entries) / len(relevant_entries)
+        except Exception as e:
+            historical_avg_speed = None
+    # ----------------------------------------------------------------------------------------------
+
     # Read historical best metrics for this digit count (if available)
     historical_best = get_best_historical_metrics(digits)
-    static_eta = None  # ETA will be calculated once
+    static_eta = None  # ETA fallback calculation using o speed atual
 
     num_processes = psutil.cpu_count(logical=True)
     manager = multiprocessing.Manager()
@@ -297,20 +307,32 @@ def main(digits_param=None):
                     attempts_val = global_attempts.value
                 speed = attempts_val / elapsed if elapsed > 0 else 0
                 cpu_percent = psutil.cpu_percent(interval=0.0)
-                if static_eta is None and speed > 0:
-                    try:
-                        if digits > 1:
-                            p_val = 30 / (8 * (digits - 1) * LOG10)
-                        else:
-                            p_val = 0.5
-                        expected_total_attempts = 1 / p_val
-                        remaining_attempts = max(expected_total_attempts - attempts_val, 0)
-                        static_eta = remaining_attempts / speed
-                    except Exception as e:
-                        static_eta = 0
-                eta = static_eta if static_eta is not None else 0
+                # ---------------- NOVA FUNCIONALIDADE: Cálculo do ETA usando a média histórica ----------------
+                if historical_avg_speed is not None and historical_avg_speed > 0:
+                    if digits > 1:
+                        p_val = 30 / (8 * (digits - 1) * LOG10)
+                    else:
+                        p_val = 0.5
+                    expected_total_attempts = 1 / p_val
+                    remaining_attempts = max(expected_total_attempts - attempts_val, 0)
+                    eta = remaining_attempts / historical_avg_speed
+                else:
+                    if static_eta is None and speed > 0:
+                        try:
+                            if digits > 1:
+                                p_val = 30 / (8 * (digits - 1) * LOG10)
+                            else:
+                                p_val = 0.5
+                            expected_total_attempts = 1 / p_val
+                            remaining_attempts = max(expected_total_attempts - attempts_val, 0)
+                            static_eta = remaining_attempts / speed
+                        except Exception as e:
+                            static_eta = 0
+                    eta = static_eta if static_eta is not None else 0
+                # ------------------------------------------------------------------------------------------
                 progress_line = (f"Digit Count: {digits} | Attempts: {attempts_val} | Time: {format_time(elapsed)} | "
                                  f"Numbers/Sec: {speed:.2f} | CPU Usage: {cpu_percent:.2f}% | ETA: {format_time(eta)}")
+                live.update(Text(progress_line, style="bold"))
     except KeyboardInterrupt:
         found_event.set()
         print("\nInterrupted by user.")
@@ -379,6 +401,41 @@ def main(digits_param=None):
     print("{:<15} {:<20} {:<20} {:<15}".format("CPU Usage", f"{cpu_percent:.2f}%", f"{historical_best['cpu']:.2f}%", format_variation(var_cpu)))
     print("{:<15} {:<20} {:<20}".format("Prime", format_scientific(prime, precision=3), historical_best["prime_scientific"]))
     
+    # ------------- NOVA FUNCIONALIDADE: Exibição do Performance Ratio -------------
+    # Calcula o Performance Ratio (tempo/attempt) em milissegundos para o cálculo atual
+    current_ratio = total_elapsed / final_attempts if final_attempts else 0
+    current_ratio_ms = current_ratio * 1000
+
+    # Para exibir o melhor índice anterior, filtramos o log excluindo o registro atual
+    current_ts = entry["timestamp"]
+    previous_best_ratio = None
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                all_logs = json.load(f)
+            previous_entries = [
+                e for e in all_logs 
+                if e.get("digits") == digits and e.get("timestamp") != current_ts and e.get("attempts", 0) > 0
+            ]
+            if previous_entries:
+                ratios = [e["elapsed"] / e["attempts"] for e in previous_entries]
+                previous_best_ratio = min(ratios)
+        except Exception as e:
+            previous_best_ratio = None
+
+    previous_best_ratio_ms = previous_best_ratio * 1000 if previous_best_ratio is not None else None
+
+    print("")  # Linha em branco
+    # Exibe o Performance Ratio atual (em negrito)
+    print("\033[1mPerformance Ratio: {:.3f} ms/attempt\033[0m".format(current_ratio_ms))
+    # Se existir um registro anterior, mostra também o melhor índice anterior.
+    if previous_best_ratio_ms is not None:
+        if current_ratio_ms < previous_best_ratio_ms:
+            print("\033[1mNew record! Previous best Performance Ratio: {:.3f} ms/attempt\033[0m".format(previous_best_ratio_ms))
+        else:
+            print("Best Performance Ratio: {:.3f} ms/attempt".format(previous_best_ratio_ms))
+    # ----------------------------------------------------------------------------
+
     # Display the system info of the best test in a summarized single line
     best_sys = historical_best.get("system_info", system_info)
     summary_line = "Computer: {} | Processor: {} | Threads: {} | Total Memory (GB): {}".format(
