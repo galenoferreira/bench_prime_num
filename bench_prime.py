@@ -31,7 +31,7 @@ import gmpy2
 from gmpy2 import mpz
 from colorama import init, Fore, Style
 import subprocess   # to ensure the beep command is fully executed
-import signal       # to implement input with timeout (not used in this version)
+import signal       # (not used for interactive prompt in this version)
 
 # Import Rich for animated output
 from rich.live import Live
@@ -85,7 +85,8 @@ def format_scientific(n, precision=3):
 
 def format_time(seconds):
     """
-    Formats a time value (in seconds) as mm:ss.d.
+    Formats a time value (in seconds) as MM:SS.D (minutes, seconds and deciseconds).
+    This function is used for the live progress display.
     """
     try:
         minutes = int(seconds // 60)
@@ -94,6 +95,19 @@ def format_time(seconds):
     except Exception as e:
         raise ValueError(f"Error formatting time: {e}")
     return f"{minutes:02d}:{secs:02d}.{deciseconds}"
+
+def format_final_time(seconds):
+    """
+    For the final summary: if the elapsed time is less than 1 second, display in milliseconds;
+    otherwise, display in the format MM:SS:CC (minutes, seconds, centiseconds).
+    """
+    if seconds < 1:
+        return f"{seconds * 1000:.3f} ms"
+    else:
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        centiseconds = int((seconds - int(seconds)) * 100)
+        return f"{minutes:02d}:{secs:02d}:{centiseconds:02d}"
 
 def is_probable_prime(n, k=10):
     """
@@ -252,7 +266,9 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
     Also shows:
       - Performance Ratio: (current test ratio in ms/attempt)
       - Previous best ratio: (record value from the log, if available)
-    If repeat_mode is True (via -r), the test is repeated for the specified number of times (repeat_count).
+    If repeat_mode is True (via -r), the test is repeated for the specified number of times.
+    For the final summary, if the elapsed time is less than 1 second, time is shown in ms;
+    otherwise, in the format MM:SS:CC.
     """
     # Get digit count either from parameter or via input
     if digits_param is None:
@@ -316,7 +332,7 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
 
     start_time = time.time()
     try:
-        # Update the interface (without ETA)
+        # Update the live interface (without ETA)
         with Live("", refresh_per_second=4, console=console) as live:
             while not found_event.is_set():
                 time.sleep(0.5)
@@ -373,7 +389,7 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
     if previous_best_ratio_ms is None:
         previous_best_ratio_ms = current_ratio_ms
 
-    # Display final results
+    # Display final results, using format_final_time for Time display
     print("\nResults:")
     header = "{:<15} {:<20} {:<20} {:<15}".format("Label", "Current", "Best", "Variation (%)")
     print(header)
@@ -381,8 +397,8 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
     print("{:<15} {:<20} {:<20} {:<15}".format("Attempts", str(final_attempts),
           str(historical_best["attempts"]) if historical_best else str(final_attempts),
           format_variation(compute_variation(final_attempts, historical_best["attempts"]) if historical_best else 0)))
-    print("{:<15} {:<20} {:<20} {:<15}".format("Time", format_time(total_elapsed),
-          format_time(historical_best["elapsed"]) if historical_best else format_time(total_elapsed),
+    print("{:<15} {:<20} {:<20} {:<15}".format("Time", format_final_time(total_elapsed),
+          format_final_time(historical_best["elapsed"]) if historical_best else format_final_time(total_elapsed),
           format_variation(compute_variation(total_elapsed, historical_best["elapsed"]) if historical_best else 0)))
     print("{:<15} {:<20} {:<20} {:<15}".format("Numbers/Sec", f"{final_speed:.2f}",
           f"{historical_best['speed']:.2f}" if historical_best else f"{final_speed:.2f}",
@@ -411,11 +427,10 @@ if __name__ == "__main__":
 
     try:
         if args.repeat is not None:
-            # Repeat tests for args.repeat times (default 10)
             for i in range(args.repeat):
-                print(f"\n--- Test iteration {i+1} of {args.repeat} ---")
+                print(f"\n--- Test iteration {i+1} of {args.repeat} ---\n")
                 main(digits_param=args.digits, repeat_mode=True)
-                print("\nRepeating test...")
+                print("\nRepeating test...\n")
                 time.sleep(1)
         else:
             main(digits_param=args.digits, repeat_mode=False)
