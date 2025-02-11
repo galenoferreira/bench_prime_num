@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Prime Search with Specified Digit Count
-Version: 1.1
+Version: 1.2
 Credits: Galeno Garbe
 
 This program searches for a prime number with a specified digit count.
