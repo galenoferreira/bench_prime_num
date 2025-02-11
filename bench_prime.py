@@ -422,6 +422,7 @@ def main(digits_param=None, repeat_mode=False, repeat_count=10):
     if current_ratio_ms < previous_best_ratio_ms:
         play_beep()
         print("\nNew record achieved!")
+        print("\nTo see full number type: jq '.[-1].prime' prime_log.json")
         sys.exit(0)
     return
 
